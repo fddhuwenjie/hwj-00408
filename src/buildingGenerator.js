@@ -214,9 +214,12 @@ export function generateBuilding(params) {
 
   const geometry = new THREE.ExtrudeGeometry(buildingShape, extrudeSettings);
   geometry.rotateX(-Math.PI / 2);
+  geometry.computeBoundingBox();
+  const yOffset = -geometry.boundingBox.min.y;
+  geometry.translate(0, yOffset, 0);
 
   const buildingMesh = new THREE.Mesh(geometry, materials);
-  buildingMesh.position.y = height / 2;
+  buildingMesh.position.y = 0;
   buildingMesh.castShadow = true;
   buildingMesh.receiveShadow = true;
   group.add(buildingMesh);
