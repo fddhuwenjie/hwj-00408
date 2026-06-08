@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D 程序化城市生成器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    canvas {
+      display: block;
+    }
+    #minimap {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 200px;
+      height: 200px;
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.3);
+      z-index: 100;
+    }
+    #minimap canvas {
+      width: 100%;
+      height: 100%;
+    }
+    #stats-panel {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      font-size: 13px;
+      min-width: 200px;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+    #stats-panel h3 {
+      margin-bottom: 10px;
+      color: #4fc3f7;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      padding-bottom: 5px;
+    }
+    #stats-panel .stat-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 5px 0;
+    }
+    #stats-panel .stat-value {
+      color: #ffd54f;
+      font-weight: bold;
+    }
+    #building-info {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      min-width: 250px;
+      z-index: 200;
+      display: none;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    #building-info h3 {
+      color: #4fc3f7;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+    #building-info .info-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 8px 0;
+    }
+    #building-info .info-label {
+      color: #aaa;
+    }
+    #building-info .info-value {
+      color: #ffd54f;
+      font-weight: bold;
+    }
+    #building-info .close-btn {
+      position: absolute;
+      top: 10px;
+      right: 15px;
+      cursor: pointer;
+      color: #aaa;
+      font-size: 20px;
+    }
+    #building-info .close-btn:hover {
+      color: white;
+    }
+    #view-indicator {
+      position: absolute;
+      bottom: 230px;
+      right: 20px;
+      color: white;
+      font-size: 11px;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 3px 8px;
+      border-radius: 4px;
+      z-index: 100;
+    }
+    .dg.ac {
+      z-index: 100 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  
+  <div id="stats-panel">
+    <h3>城市统计</h3>
+    <div class="stat-row">
+      <span>总建筑数:</span>
+      <span class="stat-value" id="stat-buildings">0</span>
+    </div>
+    <div class="stat-row">
+      <span>总面积:</span>
+      <span class="stat-value" id="stat-area">0 m²</span>
+    </div>
+    <div class="stat-row">
+      <span>平均高度:</span>
+      <span class="stat-value" id="stat-avg-height">0 m</span>
+    </div>
+    <div class="stat-row">
+      <span>最高建筑:</span>
+      <span class="stat-value" id="stat-max-height">0 m</span>
+    </div>
+  </div>
+
+  <div id="minimap">
+    <canvas id="minimap-canvas"></canvas>
+  </div>
+  <div id="view-indicator">小地图</div>
+
+  <div id="building-info">
+    <span class="close-btn" onclick="document.getElementById('building-info').style.display='none'">×</span>
+    <h3 id="info-title">建筑信息</h3>
+    <div class="info-row">
+      <span class="info-label">层数:</span>
+      <span class="info-value" id="info-floors">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">高度:</span>
+      <span class="info-value" id="info-height">- m</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">占地面积:</span>
+      <span class="info-value" id="info-area">- m²</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">建筑类型:</span>
+      <span class="info-value" id="info-type">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">立面样式:</span>
+      <span class="info-value" id="info-style">-</span>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
