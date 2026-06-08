@@ -2,10 +2,28 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'lil-gui';
 import { generateCity, updateCityNightMode } from './cityLayout.js';
-import { updateBuildingNightMode } from './buildingGenerator.js';
-import { createDayNightSystem, updateDayNightSystem } from './dayNightSystem.js';
+import { 
+  updateBuildingNightMode, 
+  toggleBuildingXRay, 
+  highlightFloor,
+  exitBuildingXRay
+} from './buildingGenerator.js';
+import { createDayNightSystem, updateDayNightSystem, setDayNightWeather } from './dayNightSystem.js';
 import { createTrafficSystem, generateVehicles, updateTraffic, updateTrafficNightMode } from './trafficSystem.js';
 import { createMinimap } from './minimap.js';
+import { 
+  createSubwaySystem, 
+  toggleSubwayView, 
+  getStationInfo,
+  LINE_COLORS
+} from './subwaySystem.js';
+import { 
+  createWeatherSystem, 
+  setWeather, 
+  updateWeatherSystem,
+  setWindSpeed,
+  WEATHER_TYPES
+} from './weatherSystem.js';
 
 const params = {
   cityRadius: 300,
@@ -21,15 +39,24 @@ const params = {
   autoTimeSpeed: 0.02,
   vehicleCount: 100,
   vehicleSpeed: 1,
-  regenerate: () => regenerateCity(),
-  toggleBuildingInfo: () => {}
+  weather: 'sunny',
+  windSpeed: 0.3,
+  subwayView: false,
+  toggleSubwayView: () => handleToggleSubwayView(),
+  toggleXRay: () => handleToggleXRay(),
+  exitXRay: () => handleExitXRay(),
+  selectedFloor: -1,
+  regenerate: () => regenerateCity()
 };
 
 let scene, camera, renderer, controls;
 let cityData, dayNightSystem, trafficSystem, minimap;
+let subwaySystem, weatherSystem;
 let raycaster, mouse;
 let selectedBuilding = null;
 let lastSelectedBuilding = null;
+let xrayBuilding = null;
+let guiControllers = {};
 
 const clock = new THREE.Clock();
 
@@ -103,6 +130,32 @@ function setupGUI() {
   });
   trafficFolder.open();
 
+  const weatherFolder = gui.addFolder('天气系统');
+  weatherFolder.add(params, 'weather', ['sunny', 'rainy', 'snowy', 'foggy']).name('天气类型').onChange(v => {
+    if (weatherSystem) {
+      setWeather(weatherSystem, v);
+    }
+  });
+  weatherFolder.add(params, 'windSpeed', 0, 1, 0.01).name('风速').onChange(v => {
+    if (weatherSystem) {
+      setWindSpeed(weatherSystem, v);
+    }
+  });
+  weatherFolder.open();
+
+  const viewFolder = gui.addFolder('视图控制');
+  viewFolder.add(params, 'toggleSubwayView').name('切换地铁视图');
+  guiControllers.toggleXRay = viewFolder.add(params, 'toggleXRay').name('切换建筑透视').disable();
+  guiControllers.exitXRay = viewFolder.add(params, 'exitXRay').name('退出透视').disable();
+  guiControllers.selectedFloor = viewFolder.add(params, 'selectedFloor', -1, 50, 1).name('选择楼层').listen().disable().onChange(v => {
+    if (xrayBuilding) {
+      const floorIndex = v < 0 ? null : v;
+      highlightFloor(xrayBuilding, floorIndex);
+      updateFloorList(xrayBuilding, floorIndex);
+    }
+  });
+  viewFolder.open();
+
   gui.add(params, 'regenerate').name('重新生成城市');
 
   const info = gui.addFolder('操作说明');
@@ -110,6 +163,7 @@ function setupGUI() {
   info.add({ info: '滚轮: 缩放' }, 'info').name('滚轮缩放').disable();
   info.add({ info: '右键拖拽: 平移' }, 'info').name('右键平移').disable();
   info.add({ info: '点击建筑: 查看信息' }, 'info').name('点击查看信息').disable();
+  info.add({ info: '点击地铁站: 查看地铁信息' }, 'info').name('地铁信息').disable();
   info.open();
 }
 
@@ -130,7 +184,21 @@ function onMouseClick(event) {
 
   raycaster.setFromCamera(mouse, camera);
 
-  const buildingMeshes = cityData.buildings.map(b => b.buildingMesh);
+  const stationMeshes = subwaySystem ? subwaySystem.stationMarkers.map(s => s.mesh) : [];
+  const stationIntersects = raycaster.intersectObjects(stationMeshes, true);
+  
+  if (stationIntersects.length > 0) {
+    let obj = stationIntersects[0].object;
+    while (obj && !obj.userData.type) {
+      obj = obj.parent;
+    }
+    if (obj && obj.userData.type === 'subwayStation') {
+      showStationInfo(obj.userData.station);
+      return;
+    }
+  }
+
+  const buildingMeshes = cityData ? cityData.buildings.map(b => b.buildingMesh) : [];
   const intersects = raycaster.intersectObjects(buildingMeshes, false);
 
   if (intersects.length > 0) {
@@ -138,12 +206,23 @@ function onMouseClick(event) {
     const buildingData = buildingMesh.userData.buildingData;
     
     if (buildingData) {
+      if (xrayBuilding && xrayBuilding !== buildingData) {
+        exitBuildingXRay(xrayBuilding);
+      }
+      
       showBuildingInfo(buildingData);
       highlightBuilding(buildingData);
+      
+      updateXRayControls(buildingData);
     }
   } else {
     hideBuildingInfo();
+    hideStationInfo();
     clearHighlight();
+    
+    if (xrayBuilding) {
+      handleExitXRay();
+    }
   }
 }
 
@@ -159,7 +238,7 @@ function highlightBuilding(buildingData) {
 }
 
 function clearHighlight() {
-  if (lastSelectedBuilding) {
+  if (lastSelectedBuilding && lastSelectedBuilding !== xrayBuilding) {
     lastSelectedBuilding.buildingMesh.material.forEach(mat => {
       if (mat.emissive) {
         const originalEmissive = mat.userData.originalEmissive || 0x000000;
@@ -179,11 +258,168 @@ function showBuildingInfo(buildingData) {
   document.getElementById('info-area').textContent = buildingData.totalArea.toFixed(0) + ' m²';
   document.getElementById('info-type').textContent = buildingData.type;
   document.getElementById('info-style').textContent = buildingData.styleName;
+  
+  if (buildingData.xrayMode) {
+    showFloorPanel(buildingData);
+  } else {
+    hideFloorPanel();
+  }
+  
   infoPanel.style.display = 'block';
 }
 
 function hideBuildingInfo() {
   document.getElementById('building-info').style.display = 'none';
+  hideFloorPanel();
+}
+
+function showFloorPanel(buildingData) {
+  const floorPanel = document.getElementById('floor-panel');
+  const floorList = document.getElementById('floor-list');
+  
+  floorList.innerHTML = '';
+  
+  buildingData.floorData.forEach((floor, index) => {
+    const row = document.createElement('div');
+    row.className = 'floor-row';
+    row.dataset.floor = index;
+    row.innerHTML = `
+      <span class="floor-color" style="background: ${floor.hex}"></span>
+      <span class="floor-name">${floor.name}</span>
+      <span class="floor-function">${floor.function}</span>
+      <span class="floor-area">${floor.area.toFixed(0)} m²</span>
+    `;
+    row.onclick = () => {
+      params.selectedFloor = index;
+      highlightFloor(buildingData, index);
+      updateFloorList(buildingData, index);
+    };
+    floorList.appendChild(row);
+  });
+  
+  floorPanel.style.display = 'block';
+  updateFloorList(buildingData, buildingData.selectedFloor);
+}
+
+function updateFloorList(buildingData, selectedFloor) {
+  const rows = document.querySelectorAll('.floor-row');
+  rows.forEach(row => {
+    const floorIdx = parseInt(row.dataset.floor);
+    if (floorIdx === selectedFloor) {
+      row.classList.add('selected');
+    } else {
+      row.classList.remove('selected');
+    }
+  });
+}
+
+function hideFloorPanel() {
+  document.getElementById('floor-panel').style.display = 'none';
+}
+
+function showStationInfo(station) {
+  const info = getStationInfo(station);
+  const stationPanel = document.getElementById('station-info');
+  
+  document.getElementById('station-name').textContent = info.name;
+  document.getElementById('station-line').textContent = info.lineName;
+  document.getElementById('station-line').style.color = info.lineColor;
+  document.getElementById('station-transfer').textContent = info.isTransfer ? '是' : '否';
+  
+  if (info.isTransfer && info.transferLines) {
+    document.getElementById('station-transfer-lines').textContent = info.transferLines;
+    document.getElementById('transfer-row').style.display = 'flex';
+  } else {
+    document.getElementById('transfer-row').style.display = 'none';
+  }
+  
+  document.getElementById('station-position').textContent = `(${info.position.x}, ${info.position.z})`;
+  
+  stationPanel.style.display = 'block';
+}
+
+function hideStationInfo() {
+  document.getElementById('station-info').style.display = 'none';
+}
+
+function handleToggleSubwayView() {
+  if (!subwaySystem || !cityData) return;
+  
+  const enabled = toggleSubwayView(subwaySystem, cityData);
+  params.subwayView = enabled;
+  
+  const indicator = document.getElementById('subway-indicator');
+  if (indicator) {
+    indicator.textContent = enabled ? '地铁视图: 开启' : '地铁视图: 关闭';
+    indicator.style.display = 'block';
+  }
+}
+
+function handleToggleXRay() {
+  if (!selectedBuilding) return;
+  
+  if (xrayBuilding === selectedBuilding) {
+    handleExitXRay();
+  } else {
+    xrayBuilding = selectedBuilding;
+    toggleBuildingXRay(xrayBuilding, true);
+    showBuildingInfo(xrayBuilding);
+    
+    params.selectedFloor = -1;
+    updateXRayControls(xrayBuilding);
+  }
+}
+
+function handleExitXRay() {
+  if (xrayBuilding) {
+    exitBuildingXRay(xrayBuilding);
+    const oldBuilding = xrayBuilding;
+    xrayBuilding = null;
+    params.selectedFloor = -1;
+    hideFloorPanel();
+    
+    if (selectedBuilding && selectedBuilding === oldBuilding) {
+      updateXRayControls(selectedBuilding);
+    } else {
+      updateXRayControls(null);
+    }
+  }
+}
+
+function updateXRayControls(buildingData) {
+  if (buildingData) {
+    if (guiControllers.toggleXRay) {
+      guiControllers.toggleXRay.enable();
+    }
+    if (xrayBuilding) {
+      if (guiControllers.exitXRay) {
+        guiControllers.exitXRay.enable();
+      }
+      if (guiControllers.selectedFloor) {
+        guiControllers.selectedFloor.enable();
+        guiControllers.selectedFloor.max(buildingData.floors - 1);
+      }
+    } else {
+      if (guiControllers.exitXRay) {
+        guiControllers.exitXRay.disable();
+      }
+      if (guiControllers.selectedFloor) {
+        guiControllers.selectedFloor.disable();
+      }
+    }
+    params.selectedFloor = buildingData.selectedFloor !== null ? buildingData.selectedFloor : -1;
+  } else {
+    if (guiControllers.toggleXRay) {
+      guiControllers.toggleXRay.disable();
+    }
+    if (guiControllers.exitXRay) {
+      guiControllers.exitXRay.disable();
+    }
+    if (guiControllers.selectedFloor) {
+      guiControllers.selectedFloor.disable();
+    }
+    params.selectedFloor = -1;
+  }
 }
 
 function updateStats() {
@@ -192,6 +428,16 @@ function updateStats() {
   document.getElementById('stat-area').textContent = cityData.stats.totalArea.toFixed(0) + ' m²';
   document.getElementById('stat-avg-height').textContent = cityData.stats.avgHeight.toFixed(1) + ' m';
   document.getElementById('stat-max-height').textContent = cityData.stats.maxHeight.toFixed(1) + ' m';
+  
+  if (subwaySystem) {
+    document.getElementById('stat-subway-lines').textContent = subwaySystem.lines.length;
+    document.getElementById('stat-subway-stations').textContent = subwaySystem.stations.length;
+  }
+  
+  if (weatherSystem) {
+    const weatherName = WEATHER_TYPES[weatherSystem.currentWeather]?.name || '未知';
+    document.getElementById('stat-weather').textContent = weatherName;
+  }
 }
 
 function regenerateCity() {
@@ -200,10 +446,19 @@ function regenerateCity() {
     clearHighlight();
     lastSelectedBuilding = null;
     selectedBuilding = null;
+    xrayBuilding = null;
   }
 
   if (trafficSystem && trafficSystem.mesh) {
     scene.remove(trafficSystem.mesh);
+  }
+  
+  if (subwaySystem && subwaySystem.mesh) {
+    scene.remove(subwaySystem.mesh);
+  }
+  
+  if (weatherSystem && weatherSystem.mesh) {
+    scene.remove(weatherSystem.mesh);
   }
 
   const isNight = dayNightSystem ? dayNightSystem.isNight : false;
@@ -226,6 +481,13 @@ function regenerateCity() {
   trafficSystem.isNight = isNight;
   scene.add(trafficSystem.mesh);
   generateVehicles(trafficSystem, params.vehicleCount);
+  
+  subwaySystem = createSubwaySystem(cityData);
+  scene.add(subwaySystem.mesh);
+  
+  weatherSystem = createWeatherSystem(scene, cityData, dayNightSystem);
+  setWindSpeed(weatherSystem, params.windSpeed);
+  scene.add(weatherSystem.mesh);
 
   minimap = createMinimap(camera, cityData, 'minimap-canvas');
 
@@ -234,6 +496,9 @@ function regenerateCity() {
   controls.target.set(0, 20, 0);
   camera.position.set(params.cityRadius * 1.2, params.cityRadius * 0.8, params.cityRadius * 1.2);
   controls.maxDistance = params.cityRadius * 3;
+  
+  params.subwayView = false;
+  params.selectedFloor = -1;
 }
 
 function updateVehicles() {
@@ -247,10 +512,13 @@ function updateVehicles() {
   generateVehicles(trafficSystem, params.vehicleCount);
 }
 
+let statsUpdateTimer = 0;
+
 function animate() {
   requestAnimationFrame(animate);
 
   const deltaTime = clock.getDelta();
+  statsUpdateTimer += deltaTime;
 
   if (params.autoTime) {
     params.timeOfDay = (params.timeOfDay + params.autoTimeSpeed * deltaTime) % 1;
@@ -270,8 +538,22 @@ function animate() {
     updateTraffic(trafficSystem, deltaTime);
   }
 
+  if (weatherSystem) {
+    const weatherResult = updateWeatherSystem(weatherSystem, deltaTime, params.timeOfDay);
+    setDayNightWeather(dayNightSystem, weatherResult.currentWeather, weatherResult.intensity);
+    
+    if (weatherResult.currentWeather !== params.weather && !weatherResult.isTransitioning) {
+      params.weather = weatherResult.currentWeather;
+    }
+  }
+
   if (minimap) {
     minimap.draw();
+  }
+
+  if (statsUpdateTimer > 0.5) {
+    updateStats();
+    statsUpdateTimer = 0;
   }
 
   controls.update();

@@ -36,6 +36,14 @@ const FACADE_STYLES = {
 
 const BUILDING_TYPES = ['商业楼', '办公楼', '住宅楼', '综合楼', '酒店'];
 
+const FLOOR_FUNCTIONS = [
+  { name: '办公', color: 0x66aaff, hex: '#66aaff' },
+  { name: '商铺', color: 0xffaa33, hex: '#ffaa33' },
+  { name: '餐饮', color: 0xff6666, hex: '#ff6666' },
+  { name: '停车场', color: 0x888888, hex: '#888888' },
+  { name: '机房', color: 0x66ff66, hex: '#66ff66' }
+];
+
 function createFacadeTexture(style, windowsX, windowsY, isNight) {
   const canvas = document.createElement('canvas');
   const width = 256;
@@ -158,6 +166,134 @@ function calculateFootprintArea(points) {
   return Math.abs(area / 2);
 }
 
+function generateFloorData(floors, footprintArea, buildingType) {
+  const floorData = [];
+  const parkingFloors = Math.min(3, Math.floor(Math.random() * 3));
+  
+  for (let i = 0; i < floors; i++) {
+    let floorFunc;
+    if (i < parkingFloors) {
+      floorFunc = FLOOR_FUNCTIONS[3];
+    } else if (i === 0) {
+      if (buildingType === '商业楼' || buildingType === '综合楼') {
+        floorFunc = FLOOR_FUNCTIONS[1];
+      } else if (buildingType === '酒店') {
+        floorFunc = FLOOR_FUNCTIONS[2];
+      } else {
+        floorFunc = FLOOR_FUNCTIONS[Math.floor(Math.random() * 3)];
+      }
+    } else if (i === floors - 1 && Math.random() > 0.7) {
+      floorFunc = FLOOR_FUNCTIONS[4];
+    } else {
+      if (buildingType === '办公楼') {
+        floorFunc = FLOOR_FUNCTIONS[0];
+      } else if (buildingType === '商业楼') {
+        floorFunc = FLOOR_FUNCTIONS[Math.floor(Math.random() * 3)];
+      } else if (buildingType === '住宅楼') {
+        floorFunc = FLOOR_FUNCTIONS[Math.random() > 0.5 ? 0 : 2];
+      } else if (buildingType === '酒店') {
+        floorFunc = FLOOR_FUNCTIONS[Math.random() > 0.3 ? 0 : 2];
+      } else {
+        floorFunc = FLOOR_FUNCTIONS[Math.floor(Math.random() * FLOOR_FUNCTIONS.length)];
+      }
+    }
+    
+    const areaVariance = 0.85 + Math.random() * 0.3;
+    
+    floorData.push({
+      floor: i,
+      name: `${i + 1}层`,
+      function: floorFunc.name,
+      color: floorFunc.color,
+      hex: floorFunc.hex,
+      area: footprintArea * areaVariance,
+      height: FLOOR_HEIGHT,
+      yPos: i * FLOOR_HEIGHT
+    });
+  }
+  
+  return floorData;
+}
+
+function createFloorMesh(floorData, baseWidth, baseDepth) {
+  const group = new THREE.Group();
+  
+  const planeGeom = new THREE.PlaneGeometry(baseWidth * 0.9, baseDepth * 0.9);
+  const planeMat = new THREE.MeshStandardMaterial({
+    color: floorData.color,
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide,
+    emissive: floorData.color,
+    emissiveIntensity: 0.1
+  });
+  const plane = new THREE.Mesh(planeGeom, planeMat);
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.y = floorData.yPos + FLOOR_HEIGHT / 2;
+  group.add(plane);
+  
+  const gridHelper = new THREE.GridHelper(
+    baseWidth * 0.9, 
+    Math.max(4, Math.floor(baseWidth / 3)), 
+    floorData.color, 
+    floorData.color
+  );
+  gridHelper.position.y = floorData.yPos + FLOOR_HEIGHT / 2 + 0.01;
+  gridHelper.material.transparent = true;
+  gridHelper.material.opacity = 0.3;
+  group.add(gridHelper);
+  
+  const borderGeom = new THREE.EdgesGeometry(
+    new THREE.BoxGeometry(baseWidth * 0.92, FLOOR_HEIGHT * 0.9, baseDepth * 0.92)
+  );
+  const borderMat = new THREE.LineBasicMaterial({
+    color: floorData.color,
+    transparent: true,
+    opacity: 0.5
+  });
+  const border = new THREE.LineSegments(borderGeom, borderMat);
+  border.position.y = floorData.yPos + FLOOR_HEIGHT / 2;
+  group.add(border);
+  
+  group.visible = false;
+  group.userData = { 
+    floorIndex: floorData.floor, 
+    isFloorGroup: true,
+    originalOpacity: 0.6
+  };
+  
+  return { mesh: group, plane, gridHelper, border, floorData };
+}
+
+function createWireframeBuilding(buildingMesh, originalMaterials) {
+  const group = new THREE.Group();
+  
+  const wireframeGeom = buildingMesh.geometry.clone();
+  const wireframeMat = new THREE.MeshBasicMaterial({
+    color: 0x4488ff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.8
+  });
+  const wireframe = new THREE.Mesh(wireframeGeom, wireframeMat);
+  wireframe.position.copy(buildingMesh.position);
+  group.add(wireframe);
+  
+  const edgesGeom = new THREE.EdgesGeometry(buildingMesh.geometry);
+  const edgesMat = new THREE.LineBasicMaterial({
+    color: 0x66aaff,
+    transparent: true,
+    opacity: 0.9
+  });
+  const edges = new THREE.LineSegments(edgesGeom, edgesMat);
+  edges.position.copy(buildingMesh.position);
+  group.add(edges);
+  
+  group.visible = false;
+  
+  return { mesh: group, wireframe, edges };
+}
+
 export function generateBuilding(params) {
   const {
     position = { x: 0, z: 0 },
@@ -188,6 +324,10 @@ export function generateBuilding(params) {
     roughness: styleConfig.roughness,
     metalness: styleConfig.metalness
   });
+  facadeMaterial.userData.originalColor = styleConfig.color;
+  facadeMaterial.userData.originalEmissive = styleConfig.emissive;
+  facadeMaterial.userData.originalOpacity = 1;
+  facadeMaterial.userData.originalTransparent = false;
 
   const roofMaterial = new THREE.MeshStandardMaterial({
     map: roofTexture,
@@ -195,6 +335,10 @@ export function generateBuilding(params) {
     roughness: 0.9,
     metalness: 0.1
   });
+  roofMaterial.userData.originalColor = 0x666666;
+  roofMaterial.userData.originalEmissive = 0x000000;
+  roofMaterial.userData.originalOpacity = 1;
+  roofMaterial.userData.originalTransparent = false;
 
   const materials = [
     facadeMaterial,
@@ -223,6 +367,21 @@ export function generateBuilding(params) {
   buildingMesh.castShadow = true;
   buildingMesh.receiveShadow = true;
   group.add(buildingMesh);
+
+  const buildingType = BUILDING_TYPES[Math.floor(Math.random() * BUILDING_TYPES.length)];
+  const floorData = generateFloorData(floors, footprintArea, buildingType);
+  
+  const floorMeshes = [];
+  floorData.forEach(fd => {
+    const floorMesh = createFloorMesh(fd, baseWidth, baseDepth);
+    floorMesh.mesh.visible = false;
+    group.add(floorMesh.mesh);
+    floorMeshes.push(floorMesh);
+  });
+  
+  const wireframeBuilding = createWireframeBuilding(buildingMesh, materials);
+  wireframeBuilding.mesh.visible = false;
+  group.add(wireframeBuilding.mesh);
 
   const windowLights = [];
   if (isNight) {
@@ -274,14 +433,65 @@ export function generateBuilding(params) {
     styleName: styleConfig.name,
     footprintArea: footprintArea,
     totalArea: footprintArea * floors,
-    type: BUILDING_TYPES[Math.floor(Math.random() * BUILDING_TYPES.length)],
+    type: buildingType,
     windowLights: windowLights,
-    position: { ...position }
+    position: { ...position },
+    floorData: floorData,
+    floorMeshes: floorMeshes,
+    wireframeBuilding: wireframeBuilding,
+    xrayMode: false,
+    selectedFloor: null,
+    baseWidth: baseWidth,
+    baseDepth: baseDepth
   };
 
   buildingMesh.userData = { buildingData, type: 'building' };
 
   return buildingData;
+}
+
+export function toggleBuildingXRay(buildingData, enable) {
+  buildingData.xrayMode = enable;
+  
+  buildingData.buildingMesh.visible = !enable;
+  buildingData.wireframeBuilding.mesh.visible = enable;
+  
+  buildingData.floorMeshes.forEach(fm => {
+    fm.mesh.visible = enable;
+  });
+  
+  if (enable) {
+    highlightFloor(buildingData, buildingData.selectedFloor);
+  } else {
+    highlightFloor(buildingData, null);
+  }
+  
+  return enable;
+}
+
+export function highlightFloor(buildingData, floorIndex) {
+  buildingData.selectedFloor = floorIndex;
+  
+  buildingData.floorMeshes.forEach(fm => {
+    const isHighlighted = floorIndex === null || fm.floorData.floor === floorIndex;
+    
+    fm.plane.material.opacity = isHighlighted ? 0.8 : 0.15;
+    fm.plane.material.emissiveIntensity = isHighlighted ? 0.3 : 0.05;
+    fm.gridHelper.material.opacity = isHighlighted ? 0.6 : 0.1;
+    fm.border.material.opacity = isHighlighted ? 0.9 : 0.2;
+    
+    if (!isHighlighted) {
+      fm.plane.material.color.setHex(0x444444);
+      fm.plane.material.emissive.setHex(0x222222);
+    } else {
+      fm.plane.material.color.setHex(fm.floorData.color);
+      fm.plane.material.emissive.setHex(fm.floorData.color);
+    }
+  });
+}
+
+export function exitBuildingXRay(buildingData) {
+  toggleBuildingXRay(buildingData, false);
 }
 
 export function updateBuildingNightMode(buildingData, isNight) {

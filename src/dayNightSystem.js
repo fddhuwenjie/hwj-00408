@@ -28,6 +28,20 @@ const SUN_INTENSITY = {
   dusk: 0.8
 };
 
+const WEATHER_LIGHT_MULTIPLIERS = {
+  sunny: 1.0,
+  rainy: 0.5,
+  snowy: 0.7,
+  foggy: 0.5
+};
+
+const WEATHER_FOG_MULTIPLIERS = {
+  sunny: 1.0,
+  rainy: 0.85,
+  snowy: 0.75,
+  foggy: 0.25
+};
+
 function lerpColor(color1, color2, t) {
   return new THREE.Color().lerpColors(color1, color2, t);
 }
@@ -44,15 +58,19 @@ export function createDayNightSystem(scene) {
   sunLight.shadow.camera.top = 500;
   sunLight.shadow.camera.bottom = -500;
   sunLight.shadow.bias = -0.0001;
+  sunLight.userData.originalIntensity = 1.0;
   scene.add(sunLight);
 
   const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+  ambientLight.userData.originalIntensity = 0.5;
   scene.add(ambientLight);
 
   const hemisphereLight = new THREE.HemisphereLight(0x87ceeb, 0x335522, 0.4);
+  hemisphereLight.userData.originalIntensity = 0.4;
   scene.add(hemisphereLight);
 
   const moonLight = new THREE.DirectionalLight(0xaaaaff, 0.0);
+  moonLight.userData.originalIntensity = 0.0;
   scene.add(moonLight);
 
   scene.fog = new THREE.Fog(0x87ceeb, 200, 1000);
@@ -79,8 +97,19 @@ export function createDayNightSystem(scene) {
     sunMesh,
     moonMesh,
     currentTime: 0.5,
-    isNight: false
+    isNight: false,
+    weatherType: 'sunny',
+    weatherIntensity: 0,
+    baseFogNear: 200,
+    baseFogFar: 1000,
+    originalFogNear: 200,
+    originalFogFar: 1000
   };
+}
+
+export function setDayNightWeather(system, weatherType, weatherIntensity = 1) {
+  system.weatherType = weatherType;
+  system.weatherIntensity = weatherIntensity;
 }
 
 export function updateDayNightSystem(system, timeOfDay, cityRadius = 300) {
@@ -144,23 +173,62 @@ export function updateDayNightSystem(system, timeOfDay, cityRadius = 300) {
     isNight = true;
   }
 
-  system.sunLight.intensity = Math.max(0, sunIntensity);
+  const weatherMultiplier = WEATHER_LIGHT_MULTIPLIERS[system.weatherType] || 1.0;
+  const weatherInfluence = system.weatherIntensity;
+  const finalLightMultiplier = weatherMultiplier * weatherInfluence + (1 - weatherInfluence);
+
+  const adjustedSunIntensity = Math.max(0, sunIntensity) * finalLightMultiplier;
+  const adjustedAmbientIntensity = ambientIntensity * (weatherMultiplier * 0.7 + 0.3);
+
+  system.sunLight.intensity = adjustedSunIntensity;
+  system.sunLight.userData.originalIntensity = Math.max(0, sunIntensity);
   system.sunLight.color.setHSL(0.1, 0.8, 0.5 + sunHeight / orbitRadius * 0.3);
-  system.ambientLight.intensity = ambientIntensity;
+  
+  if (system.weatherType === 'rainy' || system.weatherType === 'foggy') {
+    const grayAmount = weatherInfluence * 0.3;
+    system.sunLight.color.lerp(new THREE.Color(0x888888), grayAmount);
+  }
+
+  system.ambientLight.intensity = adjustedAmbientIntensity;
   system.ambientLight.color.copy(skyColor).multiplyScalar(0.5);
-  system.moonLight.intensity = moonIntensity;
+  system.moonLight.intensity = moonIntensity * finalLightMultiplier;
 
-  system.hemisphereLight.color.copy(skyColor);
+  const weatherSkyColor = skyColor.clone();
+  if (system.weatherType === 'rainy') {
+    weatherSkyColor.lerp(new THREE.Color(0x556677), weatherInfluence * 0.5);
+  } else if (system.weatherType === 'snowy') {
+    weatherSkyColor.lerp(new THREE.Color(0xccccdd), weatherInfluence * 0.3);
+  } else if (system.weatherType === 'foggy') {
+    weatherSkyColor.lerp(new THREE.Color(0x888899), weatherInfluence * 0.6);
+  }
+
+  system.hemisphereLight.color.copy(weatherSkyColor);
   system.hemisphereLight.groundColor.setHex(0x224422);
-  system.hemisphereLight.intensity = ambientIntensity * 0.8;
+  system.hemisphereLight.intensity = adjustedAmbientIntensity * 0.8;
 
-  system.scene.background = skyColor;
-  system.scene.fog.color.copy(fogColor);
-  system.scene.fog.near = isNight ? 100 : 200;
-  system.scene.fog.far = isNight ? 600 : 1000;
+  const weatherFogColor = fogColor.clone();
+  if (system.weatherType === 'rainy') {
+    weatherFogColor.lerp(new THREE.Color(0x667788), weatherInfluence * 0.4);
+  } else if (system.weatherType === 'snowy') {
+    weatherFogColor.lerp(new THREE.Color(0xddddff), weatherInfluence * 0.3);
+  } else if (system.weatherType === 'foggy') {
+    weatherFogColor.lerp(new THREE.Color(0x9999aa), weatherInfluence * 0.6);
+  }
 
-  system.sunMesh.visible = sunHeight > -cityRadius * 0.5;
-  system.moonMesh.visible = moonHeight > -cityRadius * 0.5;
+  system.scene.background = weatherSkyColor;
+  system.scene.fog.color.copy(weatherFogColor);
+
+  const baseFogNear = isNight ? 100 : 200;
+  const baseFogFar = isNight ? 600 : 1000;
+  const fogMultiplier = (WEATHER_FOG_MULTIPLIERS[system.weatherType] || 1.0) * weatherInfluence + (1 - weatherInfluence);
+  
+  system.scene.fog.near = baseFogNear * (system.weatherType === 'foggy' ? 2 : 1) * (fogMultiplier * 0.5 + 0.5);
+  system.scene.fog.far = baseFogFar * fogMultiplier;
+  system.baseFogNear = baseFogNear;
+  system.baseFogFar = baseFogFar;
+
+  system.sunMesh.visible = sunHeight > -cityRadius * 0.5 && system.weatherType === 'sunny';
+  system.moonMesh.visible = moonHeight > -cityRadius * 0.5 && system.weatherType === 'sunny';
 
   if (system.sunMesh.visible) {
     const sunBrightness = Math.max(0, (sunHeight + cityRadius * 0.5) / (cityRadius * 1.5));
@@ -171,5 +239,5 @@ export function updateDayNightSystem(system, timeOfDay, cityRadius = 300) {
   const nightChanged = system.isNight !== isNight;
   system.isNight = isNight;
 
-  return { isNight, nightChanged, skyColor };
+  return { isNight, nightChanged, skyColor: weatherSkyColor };
 }

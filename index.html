@@ -49,7 +49,7 @@
       padding: 15px;
       border-radius: 8px;
       font-size: 13px;
-      min-width: 200px;
+      min-width: 220px;
       z-index: 100;
       backdrop-filter: blur(10px);
     }
@@ -68,6 +68,11 @@
       color: #ffd54f;
       font-weight: bold;
     }
+    #stats-panel .stat-section {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+    }
     #building-info {
       position: absolute;
       top: 50%;
@@ -78,7 +83,7 @@
       padding: 20px;
       border-radius: 12px;
       font-size: 14px;
-      min-width: 250px;
+      min-width: 280px;
       z-index: 200;
       display: none;
       backdrop-filter: blur(10px);
@@ -112,6 +117,119 @@
     #building-info .close-btn:hover {
       color: white;
     }
+    #floor-panel {
+      position: absolute;
+      top: 50%;
+      left: calc(50% + 160px);
+      transform: translateY(-50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 15px;
+      border-radius: 12px;
+      font-size: 13px;
+      width: 280px;
+      max-height: 400px;
+      z-index: 200;
+      display: none;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      overflow-y: auto;
+    }
+    #floor-panel h3 {
+      color: #4fc3f7;
+      margin-bottom: 10px;
+      font-size: 16px;
+    }
+    #floor-panel .floor-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+      font-size: 11px;
+      color: #888;
+    }
+    #floor-panel .floor-row {
+      display: flex;
+      align-items: center;
+      padding: 8px;
+      margin: 4px 0;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #floor-panel .floor-row:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    #floor-panel .floor-row.selected {
+      background: rgba(79, 195, 247, 0.3);
+      border: 1px solid #4fc3f7;
+    }
+    #floor-panel .floor-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      margin-right: 10px;
+      flex-shrink: 0;
+    }
+    #floor-panel .floor-name {
+      width: 50px;
+      color: #fff;
+      font-weight: bold;
+    }
+    #floor-panel .floor-function {
+      flex: 1;
+      color: #ffd54f;
+      margin: 0 10px;
+    }
+    #floor-panel .floor-area {
+      color: #aaa;
+      font-size: 12px;
+    }
+    #station-info {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      min-width: 280px;
+      z-index: 200;
+      display: none;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    #station-info h3 {
+      color: #4fc3f7;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+    #station-info .info-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 8px 0;
+    }
+    #station-info .info-label {
+      color: #aaa;
+    }
+    #station-info .info-value {
+      color: #ffd54f;
+      font-weight: bold;
+    }
+    #station-info .close-btn {
+      position: absolute;
+      top: 10px;
+      right: 15px;
+      cursor: pointer;
+      color: #aaa;
+      font-size: 20px;
+    }
+    #station-info .close-btn:hover {
+      color: white;
+    }
     #view-indicator {
       position: absolute;
       bottom: 230px;
@@ -122,6 +240,20 @@
       padding: 3px 8px;
       border-radius: 4px;
       z-index: 100;
+    }
+    #subway-indicator {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      font-size: 14px;
+      background: rgba(255, 100, 100, 0.8);
+      padding: 8px 16px;
+      border-radius: 6px;
+      z-index: 100;
+      display: none;
+      font-weight: bold;
     }
     .dg.ac {
       z-index: 100 !important;
@@ -149,7 +281,27 @@
       <span>最高建筑:</span>
       <span class="stat-value" id="stat-max-height">0 m</span>
     </div>
+    
+    <div class="stat-section">
+      <div class="stat-row">
+        <span>地铁线路:</span>
+        <span class="stat-value" id="stat-subway-lines">0</span>
+      </div>
+      <div class="stat-row">
+        <span>地铁站数:</span>
+        <span class="stat-value" id="stat-subway-stations">0</span>
+      </div>
+    </div>
+    
+    <div class="stat-section">
+      <div class="stat-row">
+        <span>当前天气:</span>
+        <span class="stat-value" id="stat-weather">晴天</span>
+      </div>
+    </div>
   </div>
+
+  <div id="subway-indicator">地铁视图: 开启</div>
 
   <div id="minimap">
     <canvas id="minimap-canvas"></canvas>
@@ -178,6 +330,38 @@
     <div class="info-row">
       <span class="info-label">立面样式:</span>
       <span class="info-value" id="info-style">-</span>
+    </div>
+  </div>
+
+  <div id="floor-panel">
+    <h3>楼层布局</h3>
+    <div class="floor-header">
+      <span style="width: 26px;"></span>
+      <span style="width: 50px;">楼层</span>
+      <span style="flex: 1; margin: 0 10px;">功能</span>
+      <span>面积</span>
+    </div>
+    <div id="floor-list"></div>
+  </div>
+
+  <div id="station-info">
+    <span class="close-btn" onclick="document.getElementById('station-info').style.display='none'">×</span>
+    <h3 id="station-name">地铁站</h3>
+    <div class="info-row">
+      <span class="info-label">所属线路:</span>
+      <span class="info-value" id="station-line">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">换乘站:</span>
+      <span class="info-value" id="station-transfer">-</span>
+    </div>
+    <div class="info-row" id="transfer-row">
+      <span class="info-label">换乘线路:</span>
+      <span class="info-value" id="station-transfer-lines">-</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">位置:</span>
+      <span class="info-value" id="station-position">-</span>
     </div>
   </div>
 
